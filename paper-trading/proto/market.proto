@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package market;
+
+// Contract shared by market-service (gRPC server) and portfolio-service (gRPC client).
+service MarketService {
+  // Returns the current quote of one instrument. NOT_FOUND if the symbol is unknown.
+  rpc GetQuote (QuoteRequest) returns (Quote);
+  // Returns every tradable instrument with its current price.
+  rpc ListInstruments (Empty) returns (InstrumentList);
+}
+
+message Empty {}
+
+message QuoteRequest {
+  string symbol = 1;
+}
+
+message Quote {
+  string symbol = 1;
+  string name = 2;
+  double price = 3;
+  string currency = 4;
+}
+
+message InstrumentList {
+  repeated Quote instruments = 1;
+}

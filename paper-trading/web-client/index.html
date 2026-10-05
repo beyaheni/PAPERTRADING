@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Trading</title>
+<style>
+  :root { --ink:#16202e; --muted:#667085; --line:#e3e7ee; --bg:#f5f7fa; --card:#fff; --accent:#0b5cad; --up:#0a7d4f; --down:#c0352b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:var(--ink); color:#fff; padding:16px 24px; display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px; }
+  header h1 { margin:0; font-size:20px; }
+  header span { color:#b6c2d4; font-size:13px; }
+  main { max-width:1100px; margin:0 auto; padding:24px; display:grid; grid-template-columns:1fr 2fr; gap:20px; }
+  @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:20px; }
+  h2 { margin:0 0 12px; font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); }
+  form { display:flex; gap:8px; flex-wrap:wrap; align-items:end; }
+  label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); gap:4px; flex:1; min-width:90px; }
+  input, select, button { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  button { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button.ghost { background:#fff; color:var(--accent); }
+  button.danger { background:#fff; color:var(--down); border-color:var(--down); }
+  .totals { display:flex; gap:24px; flex-wrap:wrap; margin-bottom:12px; }
+  .totals div { font-size:12px; color:var(--muted); }
+  .totals strong { display:block; font-size:20px; color:var(--ink); font-variant-numeric:tabular-nums; }
+  #message { display:none; margin:16px 24px 0; padding:10px 14px; border-radius:6px; font-size:14px; }
+  #message.error { display:block; background:#fdecea; color:var(--down); border:1px solid #f5c2bd; }
+  #message.ok { display:block; background:#e7f6ef; color:var(--up); border:1px solid #b7e2cd; }
+  .empty { color:var(--muted); font-size:14px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Paper Trading</h1>
+  <span>Browser &rarr; REST (portfolio-service) &rarr; gRPC (market-service)</span>
+</header>
+<div id="message" role="status"></div>
+
+<main>
+  <div>
+    <section>
+      <div class="row"><h2>Market</h2><button class="ghost" id="refresh-market">Refresh</button></div>
+      <table>
+        <thead><tr><th>Symbol</th><th>Name</th><th class="num">Price</th></tr></thead>
+        <tbody id="instruments"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>New portfolio</h2>
+      <form id="portfolio-form">
+        <label>Owner <input name="owner" required></label>
+        <label>Cash <input name="initialCash" type="number" min="0" step="0.01" value="10000" required></label>
+        <button>Create</button>
+      </form>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <div class="row">
+        <h2>Portfolio</h2>
+        <div>
+          <select id="portfolio-select" aria-label="Portfolio"></select>
+          <button class="danger" id="delete-portfolio">Delete</button>
+        </div>
+      </div>
+      <div id="portfolio-empty" class="empty">Create a portfolio to start trading.</div>
+      <div id="portfolio-detail" hidden>
+        <div class="totals">
+          <div>Cash<strong id="cash"></strong></div>
+          <div>Positions<strong id="positions-value"></strong></div>
+          <div>Total value<strong id="total-value"></strong></div>
+          <div>Unrealized P&amp;L<strong id="pnl"></strong></div>
+        </div>
+        <table>
+          <thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg price</th><th class="num">Market</th><th class="num">Value</th><th class="num">P&amp;L</th></tr></thead>
+          <tbody id="positions"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="order-section" hidden>
+      <h2>Place an order</h2>
+      <form id="order-form">
+        <label>Instrument <select name="symbol" id="order-symbol" required></select></label>
+        <label>Side <select name="side"><option>BUY</option><option>SELL</option></select></label>
+        <label>Quantity <input name="quantity" type="number" min="1" step="1" value="1" required></label>
+        <button>Send order</button>
+      </form>
+    </section>
+
+    <section id="history-section" hidden>
+      <h2>Order history</h2>
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Side</th><th>Symbol</th><th class="num">Qty</th><th class="num">Price</th></tr></thead>
+        <tbody id="orders"></tbody>
+      </table>
+    </section>
+  </div>
+</main>
+
+<script>
+// The client keeps no business logic: it only calls the REST API and displays the answers.
+const API = 'http://localhost:3000';
+const $ = (id) => document.getElementById(id);
+const money = (n) => n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+
+function notify(text, kind) {
+  $('message').textContent = text;
+  $('message').className = kind;
+}
+
+/** Calls the API; on error, shows the message sent by the server's exception handler. */
+async function api(path, options = {}) {
+  let response;
+  try {
+    response = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  } catch {
+    throw new Error('Cannot reach the REST API on ' + API + '. Is portfolio-service running?');
+  }
+  if (response.status === 204) return null;
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error([].concat(body.message).join(', '));
+  }
+  return body;
+}
+
+/** Fills a table body. Each row is an array of cells: a string, or { text, className }. */
+function fillTable(tbody, rows, emptyText) {
+  tbody.replaceChildren();
+  if (rows.length === 0) {
+    rows = [[{ text: emptyText, className: 'empty', colSpan: 6 }]];
+  }
+  for (const row of rows) {
+    const tr = tbody.insertRow();
+    for (const cell of row) {
+      const td = tr.insertCell();
+      if (typeof cell === 'object') {
+        td.textContent = cell.text;
+        td.className = cell.className || '';
+        if (cell.colSpan) td.colSpan = cell.colSpan;
+      } else {
+        td.textContent = cell;
+      }
+    }
+  }
+}
+
+const num = (text, extra = '') => ({ text, className: ('num ' + extra).trim() });
+const signClass = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : '');
+
+async function loadMarket() {
+  const instruments = await api('/instruments');
+  fillTable($('instruments'), instruments.map((i) => [i.symbol, i.name, num(money(i.price))]), 'No instrument.');
+  const select = $('order-symbol');
+  const selected = select.value;
+  select.replaceChildren(...instruments.map((i) => new Option(i.symbol + ' - ' + i.name, i.symbol)));
+  if (selected) select.value = selected;
+}
+
+async function loadPortfolios(selectId) {
+  const portfolios = await api('/portfolios');
+  const select = $('portfolio-select');
+  const wanted = String(selectId ?? select.value);
+  select.replaceChildren(...portfolios.map((p) => new Option('#' + p.id + ' - ' + p.owner, p.id)));
+  if (portfolios.some((p) => String(p.id) === wanted)) select.value = wanted;
+
+  const hasPortfolio = portfolios.length > 0;
+  $('portfolio-empty').hidden = hasPortfolio;
+  $('portfolio-detail').hidden = !hasPortfolio;
+  $('order-section').hidden = !hasPortfolio;
+  $('history-section').hidden = !hasPortfolio;
+  select.hidden = !hasPortfolio;
+  $('delete-portfolio').hidden = !hasPortfolio;
+  if (hasPortfolio) await loadPortfolio();
+}
+
+async function loadPortfolio() {
+  const id = $('portfolio-select').value;
+  if (!id) return;
+  const [valuation, orders] = await Promise.all([api('/portfolios/' + id + '/valuation'), api('/portfolios/' + id + '/orders')]);
+
+  $('cash').textContent = money(valuation.cash);
+  $('positions-value').textContent = money(valuation.positionsValue);
+  $('total-value').textContent = money(valuation.totalValue);
+  $('pnl').textContent = money(valuation.unrealizedPnl);
+  $('pnl').className = signClass(valuation.unrealizedPnl);
+
+  fillTable($('positions'), valuation.positions.map((p) => [
+    p.symbol, num(p.quantity), num(money(p.averagePrice)), num(money(p.marketPrice)),
+    num(money(p.marketValue)), num(money(p.unrealizedPnl), signClass(p.unrealizedPnl)),
+  ]), 'No position yet.');
+
+  fillTable($('orders'), orders.map((o) => [
+    String(o.id), new Date(o.executedAt).toLocaleString('en-GB'),
+    { text: o.side, className: o.side === 'BUY' ? 'up' : 'down' },
+    o.symbol, num(o.quantity), num(money(o.price)),
+  ]), 'No order yet.');
+}
+
+/** Runs an action and reports failures in the banner instead of the console. */
+function guarded(action) {
+  return async (event) => {
+    if (event) event.preventDefault();
+    try {
+      const done = await action(event);
+      notify(done || '', done ? 'ok' : '');
+    } catch (error) {
+      notify(error.message, 'error');
+    }
+  };
+}
+
+$('refresh-market').addEventListener('click', guarded(loadMarket));
+$('portfolio-select').addEventListener('change', guarded(loadPortfolio));
+
+$('portfolio-form').addEventListener('submit', guarded(async (event) => {
+  const form = new FormData(event.target);
+  const created = await api('/portfolios', {
+    method: 'POST',
+    body: JSON.stringify({ owner: form.get('owner'), initialCash: Number(form.get('initialCash')) }),
+  });
+  event.target.reset();
+  await loadPortfolios(created.id);
+  return 'Portfolio #' + created.id + ' created.';
+}));
+
+$('order-form').addEventListener('submit', guarded(async (event) => {
+  const form = new FormData(event.target);
+  const id = $('portfolio-select').value;
+  const order = await api('/portfolios/' + id + '/orders', {
+    method: 'POST',
+    body: JSON.stringify({ symbol: form.get('symbol'), side: form.get('side'), quantity: Number(form.get('quantity')) }),
+  });
+  await Promise.all([loadPortfolio(), loadMarket()]);
+  return order.side + ' ' + order.quantity + ' ' + order.symbol + ' executed at ' + money(order.price) + '.';
+}));
+
+$('delete-portfolio').addEventListener('click', guarded(async () => {
+  const id = $('portfolio-select').value;
+  if (!confirm('Delete portfolio #' + id + ' and its history?')) return '';
+  await api('/portfolios/' + id, { method: 'DELETE' });
+  await loadPortfolios();
+  return 'Portfolio #' + id + ' deleted.';
+}));
+
+guarded(async () => { await loadMarket(); await loadPortfolios(); })();
+</script>
+</body>
+</html>

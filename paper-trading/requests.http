@@ -1,0 +1,64 @@
+### Demo scenario - run with the VS Code "REST Client" extension, or copy into Postman / curl.
+@api = http://localhost:3000
+
+### 1. Instruments (REST -> gRPC ListInstruments)
+GET {{api}}/instruments
+
+### 2. Create a portfolio
+POST {{api}}/portfolios
+Content-Type: application/json
+
+{ "owner": "Alice", "initialCash": 10000 }
+
+### 3. Buy 10 BNP at market price (REST -> gRPC GetQuote)
+POST {{api}}/portfolios/1/orders
+Content-Type: application/json
+
+{ "symbol": "BNP", "side": "BUY", "quantity": 10 }
+
+### 4. Portfolio valued at current prices
+GET {{api}}/portfolios/1/valuation
+
+### 5. Sell 4 BNP
+POST {{api}}/portfolios/1/orders
+Content-Type: application/json
+
+{ "symbol": "BNP", "side": "SELL", "quantity": 4 }
+
+### 6. Order history
+GET {{api}}/portfolios/1/orders
+
+### --- Error cases handled by the exception handler ---
+
+### 400 - invalid body
+POST {{api}}/portfolios
+Content-Type: application/json
+
+{ "owner": "", "initialCash": -5 }
+
+### 404 - unknown portfolio
+GET {{api}}/portfolios/999
+
+### 404 - unknown symbol (gRPC NOT_FOUND translated to HTTP 404)
+POST {{api}}/portfolios/1/orders
+Content-Type: application/json
+
+{ "symbol": "XXX", "side": "BUY", "quantity": 1 }
+
+### 422 - insufficient funds
+POST {{api}}/portfolios/1/orders
+Content-Type: application/json
+
+{ "symbol": "MC", "side": "BUY", "quantity": 1000 }
+
+### 422 - selling more than held
+POST {{api}}/portfolios/1/orders
+Content-Type: application/json
+
+{ "symbol": "BNP", "side": "SELL", "quantity": 1000 }
+
+### 503 - stop market-service, then:
+GET {{api}}/instruments
+
+### Delete the portfolio
+DELETE {{api}}/portfolios/1
