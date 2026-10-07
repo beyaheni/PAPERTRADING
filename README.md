@@ -3,7 +3,7 @@
 A small trading simulator: create a portfolio with virtual cash, buy and sell stocks at
 the current market price, and follow the value and profit/loss of your positions.
 
-**Authors:** Beya Lina Heni
+**Authors:** Beya Lina Heni and Elsa Djaffar
 
 **Repository:** https://github.com/beyaheni/PAPERTRADING
 
